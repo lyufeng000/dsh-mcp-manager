@@ -1,0 +1,7 @@
+# 本地开发与验收产物，不随仓库发布
+node_modules/
+*.tgz
+*.bak-*
+*.log
+.DS_Store
+Thumbs.db

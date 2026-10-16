@@ -1,0 +1,52 @@
+{
+  "name": "dsh-mcp-manager",
+  "version": "0.1.0",
+  "description": "设置中的 MCP 服务器管理：查看、添加、编辑、移除与凭据配置。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-modules",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  },
+  "author": "lyufeng000",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lyufeng000/dsh-mcp-manager.git"
+  },
+  "homepage": "https://github.com/lyufeng000/dsh-mcp-manager#readme",
+  "bugs": {
+    "url": "https://github.com/lyufeng000/dsh-mcp-manager/issues"
+  }
+}
