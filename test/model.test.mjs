@@ -42,6 +42,23 @@ test('header injection, duplicate keys, prototype pollution and plaintext creden
   assert.throws(() => validateServer({ ...http, headers: [{ key: 'X-Test', mode: 'literal', value: '1' }, { key: 'x-test', mode: 'literal', value: '2' }] }));
 });
 
+test('stored documents normalize the validated representation and public rows project only active fields', async () => {
+  const { server } = validateServer(base());
+  const dirty = { ...server, serverName: ' example ', command: ' node ', headers: [{ key: 'Authorization', value: 'inactive-secret' }], token: 'extra-secret', env: [{ key: ' NORMAL ', mode: 'literal', value: 'ok', hidden: 'row-secret' }] };
+  const clean = validateStored({ version: 1, revision: 1, servers: [dirty], hidden: 'document-secret' });
+  assert.equal(clean.servers[0].serverName, 'example');
+  assert.equal(clean.servers[0].command, 'node');
+  assert.deepEqual(clean.servers[0].env, [{ key: 'NORMAL', mode: 'literal', value: 'ok' }]);
+  assert.ok(!JSON.stringify(clean).includes('secret'));
+  const visible = await publicServer(dirty, {});
+  assert.ok(!JSON.stringify(visible).includes('secret'));
+  assert.throws(() => validateStored({ version: 1, revision: 1, servers: [dirty, { ...server, id: '00000000-0000-0000-0000-000000000001' }] }), /已被使用/);
+});
+
+test('Windows environment keys reject case-insensitive duplicates', { skip: process.platform !== 'win32' }, () => {
+  assert.throws(() => validateServer({ ...base(), env: [{ key: 'Path', mode: 'literal', value: 'a' }, { key: 'PATH', mode: 'literal', value: 'b' }] }), /重复/);
+});
+
 test('stored documents are checked before mutation and external summaries hide secrets', () => {
   const { server } = validateServer(base());
   assert.equal(validateStored({ version: 1, revision: 1, servers: [server] }).servers.length, 1);

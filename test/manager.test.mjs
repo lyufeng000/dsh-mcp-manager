@@ -51,6 +51,36 @@ const rpcRequest = (endpoint, payload = {}, options = {}) => new Request(`http:/
   body: JSON.stringify({ type: 'client-request', rpcId: 'mcp-test', method: `mcp-manager/${endpoint}`, payload }), ...options
 });
 
+test('disposal rejects queued and late mutations without credential or disk writes', { skip: !runtime }, async () => {
+  const f = await fixture();
+  let release, started;
+  const gate = new Promise(resolve => { started = resolve; });
+  const active = f.manager.exclusive(async () => { started(); await new Promise(resolve => { release = resolve; }); });
+  await gate;
+  const queued = assert.rejects(f.manager.save({ revision: 0, server: { ...base('late'), env: [{ key: 'TOKEN', mode: 'secret', value: 'never-save' }] } }), /停止/);
+  const closing = f.manager.dispose();
+  const late = assert.rejects(f.manager.save({ revision: 0, server: base('later') }), /停止/);
+  release(); await Promise.all([active, queued, late, closing]);
+  assert.equal((await f.manager.read()).revision, 0);
+  assert.equal(f.credentials.size, 0);
+  assert.equal(f.manager.running.size, 0);
+});
+
+test('startup sync shares the mutation queue and disposal waits for it', { skip: !runtime }, async () => {
+  const f = await fixture();
+  let release, entered;
+  const gate = new Promise(resolve => { entered = resolve; });
+  const read = f.manager.read.bind(f.manager);
+  f.manager.read = async () => { entered(); await new Promise(resolve => { release = resolve; }); return read(); };
+  const startup = f.manager.sync(); await gate;
+  let disposed = false;
+  const closing = f.manager.dispose().then(() => { disposed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(disposed, false);
+  release(); await Promise.all([startup, closing]);
+  assert.equal(f.manager.running.size, 0);
+});
+
 test('Host exact RPC routes validate envelopes, redact errors and dispose', { skip: !runtime, timeout: 5000 }, async () => {
   const f = await fixture(), routes = new Map();
   f.ctx.provide('connection', { fetch: { register: route => { routes.set(route.path, route); return () => routes.delete(route.path); } } });
@@ -211,6 +241,44 @@ test('external removal rolls back file on reconciliation failure and protects hi
     f.ctx.profileContext.overlays.push({ insert: [{ id: 'third', name: MCP_MODULE, config: { serverName: 'third' } }] });
     await assert.rejects(f.manager.removeExternal({ id: 'include:third' }), /更高优先级/);
     assert.equal(await readFile(f.patchPath, 'utf8'), source);
+  } finally { await f.manager.dispose(); }
+});
+
+test('external removal reports a restart instead of claiming the connection went away', { skip: !runtime }, async () => {
+  const f = await fixture();
+  const source = `- insert:\n    - id: third\n      name: '${MCP_MODULE}'\n      config:\n        serverName: third\n`;
+  f.entries.push({ id: 'include:third', options: { id: 'third', name: MCP_MODULE, config: { serverName: 'third' } }, disabled: false, fiber: { uid: 1 } });
+  try {
+    await writeFile(f.patchPath, source);
+    // DSH 0.2.1 recomposeProfile reports package-moved when the new generation could
+    // not be applied; reconcileProfilePatches would have swallowed that reason.
+    f.manager.boot = { ...f.manager.boot, recomposeProfile: async () => ({ warnings: [], restartReason: 'package-moved' }) };
+    const outcome = await f.manager.removeExternal({ id: 'include:third' });
+    assert.equal(outcome.removed, true);
+    assert.equal(outcome.restartRequired, true);
+    assert.equal(outcome.restartReason, 'package-moved');
+  } finally { await f.manager.dispose(); }
+});
+
+test('external removal verifies the live loader when app-boot reports no restart reason', { skip: !runtime }, async () => {
+  const f = await fixture();
+  const source = `- insert:\n    - id: third\n      name: '${MCP_MODULE}'\n      config:\n        serverName: third\n`;
+  const live = { id: 'include:third', options: { id: 'third', name: MCP_MODULE, config: { serverName: 'third' } }, disabled: false, fiber: { uid: 1 } };
+  f.entries.push(live);
+  try {
+    await writeFile(f.patchPath, source);
+    f.manager.boot = { ...f.manager.boot, recomposeProfile: async () => ({ warnings: [] }) };
+    // The row still owns a live fiber although the new generation omits it: the
+    // manager must not report a plain success.
+    const pending = await f.manager.removeExternal({ id: 'include:third' });
+    assert.equal(pending.restartRequired, true);
+    assert.equal(pending.restartReason, 'not-applied');
+    // Once the row is no longer live the same call reports a clean removal.
+    live.fiber = undefined;
+    await writeFile(f.patchPath, source);
+    f.manager.boot = { ...f.manager.boot, recomposeProfile: async () => ({ warnings: [] }) };
+    const clean = await f.manager.removeExternal({ id: 'include:third' });
+    assert.deepEqual(clean, { removed: true });
   } finally { await f.manager.dispose(); }
 });
 

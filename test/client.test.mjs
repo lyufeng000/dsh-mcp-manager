@@ -32,6 +32,7 @@ test('Client registers the additive Settings slot with stable injected face and 
     connection: { rpc: { call: async (channel, endpoint) => {
       assert.equal(channel, '/api'); assert.equal(endpoint, 'mcp-manager/state'); calls++;
       if (bad === 'transport') throw new Error('transport failure for /api/mcp-manager/state: HTTP 404');
+      if (bad === 'forbidden') throw new Error('transport failure for /api/mcp-manager/state: HTTP 403');
       return bad ? { ok: false, error: { message: 'safe error' } } : { ok: true, value: { revision: 0, servers: [], external: [] } };
     } } }
   });
@@ -45,6 +46,14 @@ test('Client registers the additive Settings slot with stable injected face and 
   await assert.rejects(face.api('state', {}), /safe error/);
   bad = 'transport';
   await assert.rejects(face.api('state', {}), /完全退出并重新打开 DSH/);
+  // DSH 0.2.1 exact Fetch routes are owner-peer only: a non-owner session gets 403.
+  // The UI must explain the permission boundary instead of the 404 "not loaded" hint.
+  bad = 'forbidden';
+  const forbidden = await face.api('state', {}).catch(error => error);
+  assert.match(forbidden.message, /403/);
+  assert.match(forbidden.message, /拒绝访问/);
+  assert.match(forbidden.message, /桌面/);
+  assert.doesNotMatch(forbidden.message, /未加载/);
   const tree = component(face);
   const markup = JSON.stringify(tree);
   assert.ok(markup.includes('MCP 服务器'));
